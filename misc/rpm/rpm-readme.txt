@@ -11,12 +11,12 @@
     Older releases of Fedora, Redhat 7, CentOS 7, install from EPEL:
         yum -y install rpmdevtools wget python3-rpm-macros python-srpm-macros
 
-2.- Change to any unprivileged user and create the package. Not build packages using root.
+2.- Change to any unprivileged user and create the package. Dont build packages using root.
 
     cd ~
     rpmdev-setuptree
     cd ~/rpmbuild/SPECS/
-    wget 'https://raw.githubusercontent.com/rfrail3/tuptime/master/misc/rpm/tuptime.spec'
+    wget 'https://raw.githubusercontent.com/rfmoz/tuptime/master/misc/rpm/tuptime.spec'
     spectool -g -R tuptime.spec
     rpmbuild -ba --target=noarch tuptime.spec
 
@@ -28,12 +28,12 @@
 
     dnf install tuptime-*rpm   # (old way: rpm -i tuptime-*.rpm)
     systemctl enable tuptime.service && systemctl start tuptime.service
-    systemctl enable tuptime-cron.timer && systemctl start tuptime-cron.timer
+    systemctl enable tuptime-sync.timer && systemctl start tuptime-sync.timer
 
 5.- Check it all was ok:
 
     systemctl status tuptime.service
-    systemctl status tuptime-cron.timer
+    systemctl status tuptime-sync.timer
 
 
 
@@ -41,9 +41,9 @@ Z.- For testing with "dev" branch. Install "git" on step "1" and replace step "2
 
     dnf -y install git
     cd ~
-    git clone -b dev --depth=1 https://github.com/rfrail3/tuptime.git tuptime-5.1.0
+    git clone -b dev --depth=1 https://github.com/rfmoz/tuptime.git tuptime-5.2.6
     rpmdev-setuptree
     cd ~/rpmbuild/SPECS/
-    cp ../../tuptime-5.1.0/misc/rpm/tuptime.spec .
-    tar -czvf ../SOURCES/5.1.0.tar.gz ../../tuptime-5.1.0
+    cp ../../tuptime-5.2.6/misc/rpm/tuptime.spec .
+    tar -czvf ../SOURCES/5.2.6.tar.gz ../../tuptime-5.2.6
     rpmbuild -ba --target=noarch tuptime.spec

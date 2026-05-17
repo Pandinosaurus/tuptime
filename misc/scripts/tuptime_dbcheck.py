@@ -2,12 +2,26 @@
 # -*- coding: utf-8 -*-
 
 '''
-Test database integrity. Try to catch weird errors and fix them.
+Test database integrity. Try to catch weird errors and normalize db.
+
+Tests:
+  1 - Boot time after shutdown time (btime > offbtime) -> Delete row
+  2 - Previous shutdown after current boot (prev offbtime > btime) -> Delete row
+  3 - Downtime continuity (prev offbtime + prev downtime != btime) -> Recalc downtime
+  4 - Uptime consistency (btime + uptime != offbtime) -> Recalc uptime
+  5 - Running + sleep = uptime (rntime + slptime != uptime) -> Adjust rntime/slptime
+  6 - Negative uptime -> Delete row
+  7 - Negative running time -> Delete row
+  8 - Negative sleep time -> Delete row
+  9 - Negative downtime -> Delete row
+ 10 - Sequential rowids (gaps from deleted rows) -> Vacuum DB
+
+Tests 1-9 fix data inconsistencies, test 10 runs last to compact DB after deletions.
 '''
 
 import sys, argparse, locale, signal, logging, sqlite3
 
-__version__ = '1.1.0'
+__version__ = '1.1.1'
 DB_FILE = '/var/lib/tuptime/tuptime.db'
 fixcnt = 0
 errcnt = 0
@@ -39,7 +53,7 @@ def get_arguments():
         dest='fix',
         default=False,
         action='store_true',
-        help='try to fix errors automatically'
+        help='fix errors on db file'
     )
     parser.add_argument(
         '-t', '--test',
@@ -62,7 +76,7 @@ def get_arguments():
         logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.DEBUG)
         logging.info('Version: %s', (__version__))
 
-    logging.info('Arguments: %s', str(vars(arg)))
+    logging.info('Arguments: %s', vars(arg))
     return arg
 
 
@@ -92,7 +106,7 @@ def test1(arg, row, conn):
         print(' ' + str(row['btime']) + ' > ' + str(row['offbtime']))
 
         if arg.fix:
-            conn.execute('delete from tuptime where rowid = ' + str(row['startup']))
+            conn.execute('delete from tuptime where rowid =?', (row['startup'],))
             print(' FIXED: delete row = ' + str(row['startup']))
         err_cnt(arg)
 
@@ -104,7 +118,7 @@ def test2(arg, row, conn, prev_row):
         print(' ' + str(prev_row['offbtime']) + ' > ' + str(row['btime']))
 
         if arg.fix:
-            conn.execute('delete from tuptime where rowid = ' + str(row['startup']))
+            conn.execute('delete from tuptime where rowid =?', (row['startup'],))
             print(' FIXED: delete row = ' + str(row['startup']))
         err_cnt(arg)
 
@@ -117,7 +131,7 @@ def test3(arg, row, conn, prev_row):
 
         if arg.fix:
             fixed = row['btime'] - prev_row['offbtime']
-            conn.execute('update tuptime set downtime = ' + str(fixed) + ' where rowid = ' + str(row['startup'] - 1))
+            conn.execute('update tuptime set downtime =? where rowid =?', (fixed, (row['startup'] - 1)))
             print(' FIXED: prev_row downtime = ' + str(fixed))
         err_cnt(arg)
 
@@ -131,7 +145,7 @@ def test4(arg, row, conn):
 
         if arg.fix:
             fixed = row['offbtime'] - row['btime']
-            conn.execute('update tuptime set uptime = ' + str(fixed) + ' where rowid = ' + str(row['startup']))
+            conn.execute('update tuptime set uptime =? where rowid =?', (fixed, row['startup']))
             print(' FIXED: uptime = ' + str(fixed))
         err_cnt(arg)
 
@@ -146,14 +160,14 @@ def test5(arg, row, conn):
             fixed = row['rntime'] + row['slptime'] - row['uptime']
             if row['rntime'] > row['slptime'] and row['rntime'] - fixed > 0:
                 fixed2 = row['rntime'] - fixed
-                conn.execute('update tuptime set rntime = ' + str(fixed2) + ' where rowid = ' + str(row['startup']))
+                conn.execute('update tuptime set rntime =? where rowid =?', (fixed2, row['startup']))
                 print(' FIXED: rntime = ' + str(fixed2))
             elif row['slptime'] >= row['rntime'] and row['slptime'] - fixed > 0:
                 fixed2 = row['slptime'] - fixed
-                conn.execute('update tuptime set slptime = ' + str(fixed2) + ' where rowid = ' + str(row['startup']))
+                conn.execute('update tuptime set slptime =? where rowid =?', (fixed2, row['startup']))
                 print(' FIXED: slptime = ' + str(fixed2))
             else:
-                conn.execute('update tuptime set rntime = ' + str(row['uptime']) + ', slptime = 0 where rowid = ' + str(row['startup']))
+                conn.execute('update tuptime set rntime =?, slptime = 0 where rowid =?', (row['uptime'], row['startup']))
                 print(' FIXED: rntime = ' + str(row['uptime']))
                 print(' FIXED: slptime = 0')
         err_cnt(arg)
@@ -166,7 +180,7 @@ def test6(arg, row, conn):
         print(' ' + str(row['uptime']) + ' < 0')
 
         if arg.fix:
-            conn.execute('delete from tuptime where rowid = ' + str(row['startup']))
+            conn.execute('delete from tuptime where rowid =?', (row['startup'],))
             print(' FIXED: delete row = ' + str(row['startup']))
         err_cnt(arg)
 
@@ -178,7 +192,7 @@ def test7(arg, row, conn):
         print(' ' + str(row['rntime']) + ' < 0')
 
         if arg.fix:
-            conn.execute('delete from tuptime where rowid = ' + str(row['startup']))
+            conn.execute('delete from tuptime where rowid =?', (row['startup'],))
             print(' FIXED: delete row = ' + str(row['startup']))
         err_cnt(arg)
 
@@ -190,7 +204,7 @@ def test8(arg, row, conn):
         print(' ' + str(row['slptime']) + ' < 0')
 
         if arg.fix:
-            conn.execute('delete from tuptime where rowid = ' + str(row['startup']))
+            conn.execute('delete from tuptime where rowid =?', (row['startup'],))
             print(' FIXED: delete row = ' + str(row['startup']))
         err_cnt(arg)
 
@@ -203,7 +217,7 @@ def test9(arg, row, conn):
         print(' ' + str(row['downtime']) + ' < 0')
 
         if arg.fix:
-            conn.execute('delete from tuptime where rowid = ' + str(row['startup']))
+            conn.execute('delete from tuptime where rowid =?', (row['startup'],))
             print(' FIXED: delete row = ' + str(row['startup']))
         err_cnt(arg)
 
@@ -214,13 +228,14 @@ def main():
 
     db_conn = sqlite3.connect(arg.db_file)
     db_conn.row_factory = sqlite3.Row
+    db_conn.set_trace_callback(logging.debug)
     conn = db_conn.cursor()
 
     # Check if DB have the old format
     columns = [i[1] for i in conn.execute('PRAGMA table_info(tuptime)')]
-    if 'rntime' and 'slptime' and 'bootid' not in columns:
+    if 'rntime' not in columns or 'slptime' not in columns or 'bootid' not in columns:
         logging.error('DB format outdated')
-        sys.exit(-1)
+        sys.exit(1)
 
     print('Processing ' + str(arg.db_file) + ' --->')
 

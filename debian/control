@@ -1,11 +1,9 @@
 Source: tuptime
 Section: utils
-Priority: optional
-Maintainer: Ricardo Fraile <rfraile@rfraile.eu>
+Maintainer: Ricardo Fraile <r@rfmoz.eu>
 Build-Depends: debhelper-compat (= 13)
-Rules-Requires-Root: no
-Standards-Version: 4.6.0
-Homepage: https://github.com/rfrail3/tuptime
+Standards-Version: 4.7.4
+Homepage: https://github.com/rfmoz/tuptime
 
 Package: tuptime
 Architecture: all
@@ -13,8 +11,6 @@ Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${misc:Depends}, ${shlibs:Depends}
   , python3:any
-  , adduser
-  , lsb-base (>= 3.0-6)
 Description: report historical system real time
- Tuptime track and report historical and statistical real time of the
- system, keeping the uptime and downtime between shutdowns.
+ Tuptime tracks and reports historical and statistical real time of
+ the system, preserving the uptime and downtime between shutdowns.

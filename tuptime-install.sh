@@ -1,13 +1,15 @@
-#!/bin/sh
+#!/bin/bash
+set -e
 
 #
 # Tuptime installation linux script
-# v.1.8.8
 #
 # Usage:
 # 	 bash tuptime-install.sh	Default master install
 # 	 bash tuptime-install.sh -d	Install using dev branch
 #
+
+VERSION=1.9.3
 
 # Execution user
 EXUSR='_tuptime'
@@ -15,71 +17,69 @@ EXUSR='_tuptime'
 # Destination dir for executable file
 D_BIN='/usr/bin'
 
-# PID 1 process
-PID1=$(grep 'Name' /proc/1/status | cut -f2)
-
-# Swich dev branch
+# Switch dev branch
 DEV=0
 
 
 # Check bash execution
-if [ ! -n "$BASH" ]; then
-	echo "--- WARNING - execute only with BASH ---"
+if [ -z "$BASH" ]; then
+	echo "--- ERROR - execute only with BASH ---"
+	exit 1
 fi
 
 # Check root execution
 if [ "$(id -u)" != "0" ]; then
 	echo "Please run this script as root"
-	exit
+	exit 1
 fi
 
 # Test arguments
-while test $# -gt 0; do
-	case "$1" in
-		-d) DEV=1 ;;
+while getopts ":d" opt; do
+	case $opt in
+	d)
+		DEV=1
+		;;
+	\?)
+		echo "Invalid option: -$OPTARG"
+		exit 1
+		;;
 	esac
-	shift
 done
 
 # Test if it is a linux system
-if [ "$(expr substr "$(uname -s)" 1 5)" != "Linux" ]; then
+if [ "$(uname -s)" != "Linux" ]; then
 	echo "Sorry, only for Linux systems"
 	exit 1
 fi
 
-# Test if curl is installed
-curl --version > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-	echo "ERROR: \"curl\" command not available"
-	echo "Please, install it"; exit 1
-fi
-
-# Test if tar is installed
-tar --version > /dev/null 2>&1
-if [ $? -ne 0 ]; then
-	echo "ERROR: \"tar\" command not available"
-	echo "Please, install it"; exit 1
-fi
-
-# Test if python is installed
-pyver=$(python3 --version 2> /dev/null)
-if [ $? -ne 0 ]; then
-	echo "ERROR: Python not available"
-	echo "Please, install version 3 or greater"; exit 1
-else
-	# Test if version 3 or avobe of python is installed
-	pynum=$(echo "${pyver}" | tr -d '.''' | grep -Eo  '[0-9]*' | head -1 | cut -c 1-2)
-	if [ "$pynum" -lt 30 ] ; then
-		echo "ERROR: Its needed Python version 3, not ${pyver}"
-		echo "Please, upgrade it."; exit 1
-	else
-		# Test if all modules needed are available
-		pymod=$(python3 -c "import sys, os, argparse, locale, platform, signal, logging, sqlite3, datetime")
-		if [ $? -ne 0 ]; then
-			echo "ERROR: Please, ensure that these Python modules are available in the local system:"
-			echo "sys, os, optparse, sqlite3, locale, platform, datetime, logging"; exit 1
-		fi
+# Test required commands
+check_command() {
+	if ! command -v "$1" &> /dev/null; then
+		echo "ERROR: $1 command not found"
+		echo "Please install it"
+		exit 1
 	fi
+}
+
+check_command "curl"
+check_command "tar"
+check_command "python3"
+
+# Test python version
+PYTHON_VERSION=$(python3 --version | awk '{print $2}')
+if [[ "$(cut -d'.' -f1 <<<"$PYTHON_VERSION")" -lt 3 ]]; then
+	echo "ERROR: Python 3 or later is required"
+	echo "Please upgrade your Python installation"
+	exit 1
+else
+	# Test if all modules needed are available
+	REQUIRED_PYTHON_MODULES=("sys" "os" "argparse" "locale" "platform" "signal" "logging" "sqlite3" "datetime")
+	for module in "${REQUIRED_PYTHON_MODULES[@]}"; do
+		if ! python3 -c "import $module" &> /dev/null; then
+			echo "ERROR: Required Python module '$module' is not available."
+			exit 1
+		fi
+	done
 fi
 
 # Set SystemD path
@@ -89,10 +89,9 @@ else
 	SYSDPATH='/lib/systemd/system/'
 fi
 
-# Set Selinux swich
-SELX=$(getenforce 2> /dev/null)
-if [ "${SELX}" = 'Enforcing' ]; then
-        echo "Selinux enabled in Enforcing"
+# Set SElinux swich
+if getenforce 2> /dev/null | grep -q 'Enforcing'; then
+       	echo "Selinux enabled in Enforcing"
 	SELX=1
 else
 	SELX=0
@@ -102,125 +101,134 @@ fi
 F_TMP1=$(mktemp -d)
 
 echo ""
-echo "++ Tuptime installation script ++"
+echo "++ Tuptime installation script v.$VERSION ++"
 echo ""
 
 echo "+ Getting source tar file"
 if [ ${DEV} -eq 1 ]; then
 	echo "  ...using dev branch"
-	tar xz --strip 1 -C "${F_TMP1}" -f <(curl -sL https://github.com/rfrail3/tuptime/archive/dev.tar.gz) || exit
+	tar xz --strip 1 -C "${F_TMP1}" -f <(curl -sL https://github.com/rfmoz/tuptime/archive/dev.tar.gz)
 else
-	tar xz --strip 1 -C "${F_TMP1}" -f <(curl -sL https://github.com/rfrail3/tuptime/archive/master.tar.gz) || exit
+	tar xz --strip 1 -C "${F_TMP1}" -f <(curl -sL https://github.com/rfmoz/tuptime/archive/master.tar.gz)
 fi
 echo '  [OK]'
 
 echo "+ Copying files"
-install -m 755 "${F_TMP1}"/src/tuptime "${D_BIN}"/tuptime || exit
+install -m 755 "${F_TMP1}"/src/tuptime "${D_BIN}"/tuptime
 ((SELX)) && restorecon -vF "${D_BIN}"/tuptime
 echo '  [OK]'
 
 echo "+ Creating Tuptime execution user '_tuptime'"
-useradd -h > /dev/null 2>&1
-if [ $? -eq 0 ]; then
+if systemd-sysusers --version > /dev/null 2>&1; then
+	echo "  ...using systemd-sysusers"
+        install -m 644 "${F_TMP1}"/src/systemd/sysusers.d/tuptime.conf /usr/lib/sysusers.d/
+        ((SELX)) && restorecon -vF /usr/lib/sysusers.d/tuptime.conf
+	systemd-sysusers /usr/lib/sysusers.d/tuptime.conf
+	echo '  [OK]'
+
+elif useradd -h > /dev/null 2>&1; then
+	echo "  ...using useradd"
 	useradd --system --no-create-home --home-dir '/var/lib/tuptime' \
-	        --shell '/bin/false' --comment 'Tuptime execution user' "${EXUSR}"
+        	--shell '/bin/false' --comment 'Tuptime execution user' "${EXUSR}" && echo '  [OK]'
+elif adduser -h > /dev/null 2>&1; then
+	echo "  ...using adduser"
+	adduser -S -H -h '/var/lib/tuptime' -s '/bin/false' "${EXUSR}" && echo '  [OK]'
 else
-	adduser -S -H -h '/var/lib/tuptime' -s '/bin/false' "${EXUSR}"
+	echo "#######################################"
+	echo " WARNING - _tuptime user not available"
+	echo "#######################################"
+	echo '  [BAD]'
 fi
-echo '  [OK]'
 
 echo "+ Creating Tuptime db"
-tuptime -x
+tuptime -q
 echo '  [OK]'
 
 echo "+ Setting Tuptime db ownership"
-( chown -R "${EXUSR}":"${EXUSR}" /var/lib/tuptime || chown -R "${EXUSR}" /var/lib/tuptime ) || exit
-chmod 755 /var/lib/tuptime || exit
+chown -R "${EXUSR}":"${EXUSR}" /var/lib/tuptime || chown -R "${EXUSR}" /var/lib/tuptime
+chmod 755 /var/lib/tuptime
 echo '  [OK]'
 
 echo "+ Executing Tuptime with '_tuptime' user for testing"
-su -s /bin/sh "${EXUSR}" -c "tuptime -x" || exit
+su -s /bin/sh "${EXUSR}" -c "tuptime -q"
 echo '  [OK]'
 
 # Install init
+PID1=$(grep 'Name' /proc/1/status | cut -f2)
 if [ "${PID1}" = 'systemd' ]; then
 	echo "+ Copying Systemd file"
-	cp -a "${F_TMP1}"/src/systemd/tuptime.service "${SYSDPATH}" || exit
+	install -m 644 "${F_TMP1}"/src/systemd/tuptime.service "${SYSDPATH}"
 	((SELX)) && restorecon -vF "${SYSDPATH}"tuptime.service
-	systemctl daemon-reload || exit
-	systemctl enable tuptime.service && systemctl start tuptime.service || exit
+	systemctl daemon-reload
+	systemctl enable tuptime.service
+	systemctl start tuptime.service
 	echo '  [OK]'
 
 elif [ "${PID1}" = 'init' ] && [ -f /etc/rc.d/init.d/functions ]; then
 	echo "+ Copying  SysV init RedHat file"
-	install -m 755 "${F_TMP1}"/src/init.d/redhat/tuptime /etc/init.d/tuptime || exit
+	install -m 755 "${F_TMP1}"/src/init.d/redhat/tuptime /etc/init.d/tuptime
 	((SELX)) && restorecon -vF /etc/init.d/tuptime
-	chkconfig --add tuptime || exit
-	chkconfig tuptime on || exit
+	chkconfig --add tuptime
+	chkconfig tuptime on
 	echo '  [OK]'
 
 elif [ "${PID1}" = 'init' ] && [ -f /lib/lsb/init-functions ]; then
 	echo "+ Copying SysV init Debian file"
-	install -m 755 "${F_TMP1}"/src/init.d/debian/tuptime /etc/init.d/tuptime || exit
+	install -m 755 "${F_TMP1}"/src/init.d/debian/tuptime /etc/init.d/tuptime
 	((SELX)) && restorecon -vF /etc/init.d/tuptime
-	update-rc.d tuptime defaults || exit
+	update-rc.d tuptime defaults
 	echo '  [OK]'
 
-elif [ "${PID1}" = 'init' ] && [ -f /etc/rc.conf ]; then
-	echo "+ Copying OpenRC file for init"
-	install -m 755 "${F_TMP1}"/src/openrc/tuptime /etc/init.d/ || exit
-	((SELX)) && restorecon -vF /etc/init.d/tuptime
-	rc-update add tuptime default && rc-service tuptime start || exit
+elif ([ "${PID1}" = 'init' ] && [ -f /etc/rc.conf ]) || [ "${PID1}" = 'openrc-init' ]; then
+	echo "+ Copying OpenRC file"
+	install -m 755 "${F_TMP1}"/src/openrc/tuptime /etc/init.d/
+	rc-update add tuptime default
+	rc-service tuptime start
 	echo '  [OK]'
 
-elif [ "${PID1}" = 'openrc-init' ]; then
-	echo "+ Copying OpenRC file for openrc-init"
-	install -m 755 "${F_TMP1}"/src/openrc/tuptime /etc/init.d/ || exit
-	((SELX)) && restorecon -vF /etc/init.d/tuptime
-	rc-update add tuptime default && rc-service tuptime start || exit
-	echo '  [OK]'
-
-elif [ "${PID1}" = 'runit' ] && [ -f /etc/rc.local ] && [ -f /etc/rc.shutdown ]; then
+elif [ "${PID1}" = 'runit' ]; then
 	echo "+ Runit startup and shutdown execution"
-	echo 'tuptime -x' >> /etc/rc.local || exit
-	echo 'tuptime -gx' >> /etc/rc.shutdown || exit
+	echo 'tuptime -q' >> /etc/rc.local
+	echo 'tuptime -qg' >> /etc/rc.shutdown
+	echo '  [OK]'
 
 else
 	echo "#########################################"
-	echo " WARNING - Any init file for your system"
+	echo " WARNING - No init file for your system"
 	echo "#########################################"
 	echo '  [BAD]'
 fi
 
 # Install cron
-if [ -d /etc/cron.d/ ]; then
-	echo "+ Copying Cron file"
-	install -m 644 "${F_TMP1}"/src/cron.d/tuptime /etc/cron.d/tuptime || exit
-	((SELX)) && restorecon -vF /etc/cron.d/tuptime
+if [ -d "${SYSDPATH}" ]; then
+	echo "+ Copying tuptime-sync.timer and .service"
+	install -m 644 "${F_TMP1}"/src/systemd/tuptime-sync.*  "${SYSDPATH}"
+	((SELX)) && restorecon -vF "${SYSDPATH}"tuptime-sync.*
+	systemctl enable tuptime-sync.timer
+	systemctl start tuptime-sync.timer
 	echo '  [OK]'
 
-elif [ -d "${SYSDPATH}" ]; then
-	echo "+ Copying tuptime-cron.timer and .service"
-	install -m 644 "${F_TMP1}"/src/systemd/tuptime-cron.*  "${SYSDPATH}" || exit
-	((SELX)) && restorecon -vF "${SYSDPATH}"tuptime-cron.*
-	systemctl enable tuptime-cron.timer && systemctl start tuptime-cron.timer
+elif [ -d /etc/cron.d/ ]; then
+	echo "+ Copying Cron file"
+	install -m 644 "${F_TMP1}"/src/cron.d/tuptime /etc/cron.d/tuptime
+	((SELX)) && restorecon -vF /etc/cron.d/tuptime
 	echo '  [OK]'
 
 elif [ -d /etc/cron.hourly/ ]; then
 	echo "+ Cron hourly execution"
-	printf '#!/bin/sh \n tuptime -x' > /etc/cron.hourly/tuptime || exit
-	chmod 744 /etc/cron.hourly/tuptime || exit
+	printf '#!/bin/sh \n tuptime -q' > /etc/cron.hourly/tuptime
+	chmod 744 /etc/cron.hourly/tuptime
 	echo '  [OK]'
 
 elif [ -d /etc/periodic/15min/ ]; then
 	echo "+ Periodic execution"
-	printf '#!/bin/sh \n tuptime -x' > /etc/periodic/15min/tuptime || exit
-	chmod 744 /etc/periodic/15min/tuptime || exit
+	printf '#!/bin/sh \n tuptime -q' > /etc/periodic/15min/tuptime
+	chmod 744 /etc/periodic/15min/tuptime
 	echo '  [OK]'
 
 else
 	echo "#########################################"
-	echo " WARNING - Any cron file for your system"
+	echo " WARNING - No cron file for your system"
 	echo "#########################################"
 	echo '  [BAD]'
 fi

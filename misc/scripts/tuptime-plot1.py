@@ -66,7 +66,7 @@ def get_arguments():
         dest='report_events',
         action='store_true',
         default=False,
-        help='swich to report startup/shutdown events instead of hours'
+        help='switch to report startup/shutdown events instead of hours'
     )
     arg = parser.parse_args()
     return arg
@@ -282,7 +282,7 @@ def main():
     plt.grid(color='lightgrey', linestyle='--', linewidth=0.5, axis='y')
     plt.tight_layout()
     cfig = plt.get_current_fig_manager()
-    cfig.canvas.set_window_title("Tuptime")
+    cfig.canvas.manager.set_window_title("Tuptime")
     plt.legend()
     plt.show()
 
